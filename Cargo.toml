@@ -1,0 +1,28 @@
+[package]
+name = "solana-nostd-alt-bn128"
+authors = ["Dean Little <@deanmlittle>"]
+description = "A more efficient, no_std LE implementation of alt_bn128 (BN254) group/compression operations for the Solana SVM"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/blueshift-gg/solana-nostd-alt-bn128"
+readme = "Readme.md"
+keywords = ["solana", "sbpf", "bn254", "no-std", "crypto"]
+categories = ["cryptography", "no-std"]
+exclude = [".github/", ".gitignore"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+
+[dependencies]
+solana-program-error = { version = "3", default-features = false }
+
+[target.'cfg(not(any(target_os = "solana", target_arch = "bpf")))'.dependencies]
+ark-bn254 = { version = "0.6.0" }
+ark-ec = { version = "0.6.0" }
+ark-ff = { version = "0.6.0" }
+ark-serialize = { version = "0.6.0" }
+
+[dev-dependencies]
+svm-unit-test = "0.1.7"
