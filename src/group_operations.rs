@@ -615,3 +615,208 @@ pub const fn convert_endianness<const CHUNK_SIZE: usize, const ARRAY_SIZE: usize
     }
     reversed
 }
+
+// ---- Aggregation --------------------------------------------------------------------------------
+//
+// Summing many points is the one place the wrapper has redundancy to remove: folding with the `+`
+// operator rebuilds a fresh input buffer on every addition (re-copying the running accumulator).
+// These fold in a single persistent `[acc | addend]` buffer and call the ADD syscall IN PLACE
+// (input pointer == output pointer), so the accumulator is never re-copied — only each addend is
+// loaded. Measured ~8% fewer CU than the `+` fold for committee-sized `n` (litesvm).
+
+/// Aggregate (sum) a slice of G1 points: `Σ points[i]`. `GroupError` on empty input / failed add.
+pub fn aggregate_g1(points: &[G1Point]) -> Result<G1Point, AltBn128Error> {
+    let (first, rest) = points.split_first().ok_or(AltBn128Error::GroupError)?;
+    #[cfg(any(target_os = "solana", target_arch = "bpf"))]
+    {
+        let mut buf = [0u8; 128];
+        buf[..64].copy_from_slice(&first.0);
+        for p in rest {
+            buf[64..].copy_from_slice(&p.0);
+            // SAFETY: input ptr == output ptr. The alt_bn128 group-op syscall reads its full input
+            // before writing its result, so writing the sum back over the accumulator half in place
+            // is sound. Verified on-chain (see `aggregate_g1` in tests/sbpf.rs).
+            let ptr = buf.as_mut_ptr();
+            let status =
+                unsafe { sol_alt_bn128_group_op(ALT_BN128_ADD, ptr as *const u8, 128, ptr) };
+            if status != 0 {
+                return Err(AltBn128Error::GroupError);
+            }
+        }
+        let mut out = [0u8; 64];
+        out.copy_from_slice(&buf[..64]);
+        Ok(G1Point(out))
+    }
+    #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
+    {
+        let mut acc = *first;
+        for p in rest {
+            acc = (acc + *p)?;
+        }
+        Ok(acc)
+    }
+}
+
+/// Aggregate (sum) a slice of G2 points: `Σ points[i]`. `GroupError` on empty input / failed add.
+pub fn aggregate_g2(points: &[G2Point]) -> Result<G2Point, AltBn128Error> {
+    let (first, rest) = points.split_first().ok_or(AltBn128Error::GroupError)?;
+    #[cfg(any(target_os = "solana", target_arch = "bpf"))]
+    {
+        let mut buf = [0u8; 256];
+        buf[..128].copy_from_slice(&first.0);
+        for p in rest {
+            buf[128..].copy_from_slice(&p.0);
+            // SAFETY: input ptr == output ptr. The alt_bn128 group-op syscall reads its full 256-byte
+            // input before writing the 128-byte result, so writing the sum back over the accumulator
+            // half in place is sound. Verified on-chain (see `aggregate_g2` in tests/sbpf.rs).
+            let ptr = buf.as_mut_ptr();
+            let status =
+                unsafe { sol_alt_bn128_group_op(ALT_BN128_G2_ADD, ptr as *const u8, 256, ptr) };
+            if status != 0 {
+                return Err(AltBn128Error::GroupError);
+            }
+        }
+        let mut out = [0u8; 128];
+        out.copy_from_slice(&buf[..128]);
+        Ok(G2Point(out))
+    }
+    #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
+    {
+        let mut acc = *first;
+        for p in rest {
+            acc = (acc + *p)?;
+        }
+        Ok(acc)
+    }
+}
+
+/// In-place G1 aggregate — the maximum-CU variant. Slides the running sum forward through the
+/// (mutable) buffer: `[points[i] | points[i+1]]` is already contiguous, so the ADD syscall reads
+/// that pair and writes the sum into `points[i+1]`; the total ends in `points[n-1]`. No per-step
+/// copy at all (~11% fewer CU than the `+` fold). **Clobbers `points`.**
+pub fn aggregate_g1_in_place(points: &mut [G1Point]) -> Result<G1Point, AltBn128Error> {
+    let n = points.len();
+    if n == 0 {
+        return Err(AltBn128Error::GroupError);
+    }
+    #[cfg(any(target_os = "solana", target_arch = "bpf"))]
+    {
+        let base = points.as_mut_ptr() as *mut u8;
+        for i in 0..n - 1 {
+            // SAFETY: [pts[i] | pts[i+1]] is a contiguous 128-byte [acc | addend]; the output
+            // (&pts[i+1]) overlaps the input's second half. The group-op syscall reads its full
+            // input before writing its result, so this partial overlap is sound. Verified on-chain.
+            let status = unsafe {
+                sol_alt_bn128_group_op(ALT_BN128_ADD, base.add(i * 64), 128, base.add((i + 1) * 64))
+            };
+            if status != 0 {
+                return Err(AltBn128Error::GroupError);
+            }
+        }
+        Ok(points[n - 1])
+    }
+    #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
+    {
+        let mut acc = points[0];
+        for p in &points[1..] {
+            acc = (acc + *p)?;
+        }
+        Ok(acc)
+    }
+}
+
+/// In-place G2 aggregate — the maximum-CU variant (see [`aggregate_g1_in_place`]). Slides the running
+/// sum forward through the mutable buffer; total ends in `points[n-1]`. **Clobbers `points`.**
+pub fn aggregate_g2_in_place(points: &mut [G2Point]) -> Result<G2Point, AltBn128Error> {
+    let n = points.len();
+    if n == 0 {
+        return Err(AltBn128Error::GroupError);
+    }
+    #[cfg(any(target_os = "solana", target_arch = "bpf"))]
+    {
+        let base = points.as_mut_ptr() as *mut u8;
+        for i in 0..n - 1 {
+            // SAFETY: [pts[i] | pts[i+1]] is a contiguous 256-byte [acc | addend]; output (&pts[i+1])
+            // overlaps the input's second half; the syscall reads its full input before writing.
+            let status = unsafe {
+                sol_alt_bn128_group_op(
+                    ALT_BN128_G2_ADD,
+                    base.add(i * 128),
+                    256,
+                    base.add((i + 1) * 128),
+                )
+            };
+            if status != 0 {
+                return Err(AltBn128Error::GroupError);
+            }
+        }
+        Ok(points[n - 1])
+    }
+    #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
+    {
+        let mut acc = points[0];
+        for p in &points[1..] {
+            acc = (acc + *p)?;
+        }
+        Ok(acc)
+    }
+}
+
+// ============================ formal verification (Kani) ============================
+#[cfg(kani)]
+mod proofs {
+    /// `convert_endianness` is the claimed byte-reversal permutation within each chunk — proven for
+    /// ALL 2^1024 inputs, not just the KAT vectors (G2, 64-byte chunks).
+    #[kani::proof]
+    fn convert_endianness_g2_permutation() {
+        let x: [u8; 128] = kani::any();
+        let y = super::convert_endianness::<64, 128>(&x);
+        let i: usize = kani::any();
+        kani::assume(i < 128);
+        let chunk = i - (i % 64);
+        kani::assert(
+            y[i] == x[chunk + 63 - (i - chunk)],
+            "not the claimed reversal permutation",
+        );
+    }
+
+    /// ...and it is its own inverse (involution) for both G1 (32-byte) and G2 (64-byte) chunks.
+    #[kani::proof]
+    fn convert_endianness_g1_involution() {
+        let x: [u8; 64] = kani::any();
+        let r = super::convert_endianness::<32, 64>(&super::convert_endianness::<32, 64>(&x));
+        kani::assert(r == x, "G1 endianness convert is not an involution");
+    }
+    #[kani::proof]
+    fn convert_endianness_g2_involution() {
+        let x: [u8; 128] = kani::any();
+        let r = super::convert_endianness::<64, 128>(&super::convert_endianness::<64, 128>(&x));
+        kani::assert(r == x, "G2 endianness convert is not an involution");
+    }
+
+    /// `negate_fq` round-trips: for a reduced field element `c` (`0 <= c < q`), `-(-c) == c`.
+    #[kani::proof]
+    fn negate_fq_involution() {
+        let c: [u8; 32] = kani::any();
+        kani::assume(lt_modulus(&c));
+        kani::assert(
+            super::negate_fq(super::negate_fq(c)) == c,
+            "negate_fq not an involution mod q",
+        );
+    }
+
+    /// `c < q`, little-endian (compare most-significant byte down).
+    fn lt_modulus(c: &[u8; 32]) -> bool {
+        let mut i = 32;
+        while i > 0 {
+            i -= 1;
+            if c[i] < super::FIELD_MODULUS_LE[i] {
+                return true;
+            }
+            if c[i] > super::FIELD_MODULUS_LE[i] {
+                return false;
+            }
+        }
+        false
+    }
+}

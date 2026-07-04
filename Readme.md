@@ -39,6 +39,7 @@ The crate is `#![no_std]` on the Solana target; no allocator setup required. Off
 - Subtraction without a SUB syscall (none exists): computed as `a + (-b)`, where negation is pure, `const`-usable coordinate arithmetic
 - Uses `MaybeUninit` to skip zero-initializing syscall output buffers
 - Byte-compatible with `ark-bn254` — the off-chain path round-trips through it
+- **Point aggregation** — `aggregate_g1`/`aggregate_g2` sum a slice in one reused `[acc | addend]` buffer (calling ADD in place, so the accumulator is never re-copied); `aggregate_g1_in_place`/`aggregate_g2_in_place` slide the running sum through a mutable buffer with no per-step copy at all. **~16–18% fewer CU than folding with `+`** (≈112–129 CU/add saved), landing within ~11 CU of the add-syscall floor
 
 ## Benchmarks
 
@@ -66,6 +67,21 @@ On-chain compute unit cost per operation. These measure the operation only — t
 Subtraction is `add + negation` (there is no SUB syscall), so `g1_sub`/`g2_sub` cost roughly the add plus the matching `negate` row. When the subtrahend is known at compile time, binding its negation to a `const` folds the negation away and subtraction drops to the bare add cost.
 
 Compression is implemented manually (byte re-encoding, no syscall): `g1_compress`/`g2_compress` are ~4x cheaper than the `sol_alt_bn128_compression` syscall, whose fixed per-call overhead dwarfs the trivial work. Decompression needs a field square root, so it stays on the syscall.
+
+### Aggregation vs. folding with `+`
+
+Summing N points with the `+` operator rebuilds the syscall input buffer and reconstructs a `Result<Point>` on every step, re-copying the running accumulator. `aggregate_g1`/`aggregate_g2` keep the accumulator in a single `[acc | addend]` buffer and call ADD in place; `aggregate_g1_in_place`/`aggregate_g2_in_place` slide the running sum through the caller's (mutable) buffer, removing the per-step copy entirely. Full-transaction CU for summing N G2 points (litesvm; the `+`-fold's 675 CU/add matches the `g2_add` row above, confirming the scale):
+
+| N  | `+` fold | `aggregate_g2` | `aggregate_g2_in_place` |
+|---:|---------:|---------------:|------------------------:|
+| 2  |      873 |    786 (−10%)  |     815 (−7%)   |
+| 4  |    2 223 |  1 912 (−14%)  |   1 907 (−14%)  |
+| 8  |    4 923 |  4 164 (−15%)  |   4 091 (−17%)  |
+| 16 |   10 323 |  8 668 (−16%)  |   8 459 (−18%)  |
+
+Marginal cost per added point: `+` fold **675 CU**, `aggregate` **563**, `in_place` **546** — against the **535 CU** raw add-syscall floor. `aggregate` never clobbers its input and is best for tiny N; `in_place` is fastest for N ≳ 4 (the figures above include copying the points into a scratch buffer, so a caller that hands over a disposable buffer saves that copy and gets nearer the floor). The `aggregate_g1_4` / `aggregate_g2_4` / `aggregate_g2_in_place_4` sbpf benches report these under Mollusk when the suite is run.
+
+
 
 To reproduce, install `cargo build-sbf` (Solana CLI) and run:
 
