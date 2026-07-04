@@ -761,3 +761,62 @@ pub fn aggregate_g2_in_place(points: &mut [G2Point]) -> Result<G2Point, AltBn128
         Ok(acc)
     }
 }
+
+// ============================ formal verification (Kani) ============================
+#[cfg(kani)]
+mod proofs {
+    /// `convert_endianness` is the claimed byte-reversal permutation within each chunk — proven for
+    /// ALL 2^1024 inputs, not just the KAT vectors (G2, 64-byte chunks).
+    #[kani::proof]
+    fn convert_endianness_g2_permutation() {
+        let x: [u8; 128] = kani::any();
+        let y = super::convert_endianness::<64, 128>(&x);
+        let i: usize = kani::any();
+        kani::assume(i < 128);
+        let chunk = i - (i % 64);
+        kani::assert(
+            y[i] == x[chunk + 63 - (i - chunk)],
+            "not the claimed reversal permutation",
+        );
+    }
+
+    /// ...and it is its own inverse (involution) for both G1 (32-byte) and G2 (64-byte) chunks.
+    #[kani::proof]
+    fn convert_endianness_g1_involution() {
+        let x: [u8; 64] = kani::any();
+        let r = super::convert_endianness::<32, 64>(&super::convert_endianness::<32, 64>(&x));
+        kani::assert(r == x, "G1 endianness convert is not an involution");
+    }
+    #[kani::proof]
+    fn convert_endianness_g2_involution() {
+        let x: [u8; 128] = kani::any();
+        let r = super::convert_endianness::<64, 128>(&super::convert_endianness::<64, 128>(&x));
+        kani::assert(r == x, "G2 endianness convert is not an involution");
+    }
+
+    /// `negate_fq` round-trips: for a reduced field element `c` (`0 <= c < q`), `-(-c) == c`.
+    #[kani::proof]
+    fn negate_fq_involution() {
+        let c: [u8; 32] = kani::any();
+        kani::assume(lt_modulus(&c));
+        kani::assert(
+            super::negate_fq(super::negate_fq(c)) == c,
+            "negate_fq not an involution mod q",
+        );
+    }
+
+    /// `c < q`, little-endian (compare most-significant byte down).
+    fn lt_modulus(c: &[u8; 32]) -> bool {
+        let mut i = 32;
+        while i > 0 {
+            i -= 1;
+            if c[i] < super::FIELD_MODULUS_LE[i] {
+                return true;
+            }
+            if c[i] > super::FIELD_MODULUS_LE[i] {
+                return false;
+            }
+        }
+        false
+    }
+}
