@@ -17,8 +17,9 @@
 use core::hint::black_box;
 
 use solana_nostd_alt_bn128::{
-    AltBn128Error, G1Point, G2Point, ProgramError, g1_compress, g1_decompress, g2_compress,
-    g2_decompress, pairing,
+    AltBn128Error, G1Point, G2Point, ProgramError, aggregate_g1, aggregate_g1_in_place,
+    aggregate_g2, aggregate_g2_in_place, g1_compress, g1_decompress, g2_compress, g2_decompress,
+    pairing,
 };
 use svm_unit_test::svm_test;
 
@@ -208,6 +209,19 @@ fn correctness() {
     let c2 = g2_compress(black_box(&G2_UNCOMPRESSED));
     assert!(c2 == G2_COMPRESSED);
     assert!(g2_decompress(black_box(&c2)).unwrap() == G2_UNCOMPRESSED);
+
+    // Aggregation: aggregate_* equals the operator fold; the in-place (sliding) variant agrees.
+    assert!(aggregate_g1(black_box(&[A, B])).unwrap() == A_PLUS_B);
+    assert!(aggregate_g2(black_box(&[PAIR0_G2, PAIR1_G2])).unwrap() == G2_ADD_EXPECT);
+    let mut m1 = [A, B, A];
+    assert!(
+        aggregate_g1_in_place(black_box(&mut m1)).unwrap() == aggregate_g1(&[A, B, A]).unwrap()
+    );
+    let mut m2 = [PAIR0_G2, PAIR1_G2, PAIR0_G2];
+    assert!(
+        aggregate_g2_in_place(black_box(&mut m2)).unwrap()
+            == aggregate_g2(&[PAIR0_G2, PAIR1_G2, PAIR0_G2]).unwrap()
+    );
 }
 
 // The group-op syscall must reject an off-curve point on chain. The body is
@@ -351,4 +365,20 @@ fn compress_g2() {
 #[svm_test]
 fn decompress_g2() {
     black_box(g2_decompress(black_box(&G2_COMPRESSED)).unwrap());
+}
+
+#[svm_test]
+fn aggregate_g1_4() {
+    black_box(aggregate_g1(black_box(&[A, B, A, B])).unwrap());
+}
+
+#[svm_test]
+fn aggregate_g2_4() {
+    black_box(aggregate_g2(black_box(&[PAIR0_G2, PAIR1_G2, PAIR0_G2, PAIR1_G2])).unwrap());
+}
+
+#[svm_test]
+fn aggregate_g2_in_place_4() {
+    let mut pts = [PAIR0_G2, PAIR1_G2, PAIR0_G2, PAIR1_G2];
+    black_box(aggregate_g2_in_place(black_box(&mut pts)).unwrap());
 }
