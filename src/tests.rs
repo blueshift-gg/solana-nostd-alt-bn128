@@ -1909,3 +1909,47 @@ fn test_aggregate_matches_fold() {
     assert_eq!(aggregate_g2_in_place(&mut [p0]).unwrap(), p0);
     assert!(aggregate_g2_in_place(&mut []).is_err());
 }
+
+// ---- proptest: host-path randomized sanity net (complements Kani + the on-chain harness) --------
+// The shipped syscall paths can't run on host, so these exercise the crate's *wrapper* logic — the
+// endianness permutation and the aggregate fold/loop — over random inputs via the arkworks path.
+use proptest::prelude::*;
+
+/// A valid LE G2 base point (`PAIR0_G2`) to generate random subgroup points from (base * scalar).
+const PROP_BASE_G2: [u8; 128] = [
+    0x78, 0x16, 0xa4, 0x15, 0x63, 0x4b, 0xaf, 0x49, 0x40, 0xc0, 0x8a, 0x4c, 0x11, 0x60, 0x59, 0x90,
+    0x28, 0x8d, 0x84, 0x61, 0x35, 0xb4, 0x34, 0x8b, 0xfa, 0x3b, 0x48, 0x01, 0xca, 0x11, 0xbf, 0x04,
+    0xf7, 0x5b, 0xa3, 0x03, 0x20, 0x45, 0x4a, 0x6b, 0x39, 0x14, 0x35, 0xc6, 0x36, 0x96, 0x32, 0xa7,
+    0x99, 0xcf, 0x93, 0x1a, 0xe5, 0x88, 0xd8, 0x4b, 0x6c, 0xd4, 0xf5, 0xbf, 0x5e, 0xd1, 0x9d, 0x20,
+    0x50, 0x75, 0x87, 0xde, 0xe4, 0xe5, 0x5f, 0x16, 0x48, 0xb0, 0x9b, 0x0c, 0x1f, 0xe6, 0xcc, 0xa2,
+    0x7e, 0xe0, 0x39, 0xfe, 0xc6, 0x20, 0x5f, 0x84, 0xf9, 0x1b, 0x0c, 0xf3, 0x4c, 0x2a, 0x0a, 0x12,
+    0x4d, 0x34, 0xbe, 0x51, 0x2a, 0x3c, 0x93, 0xbf, 0xad, 0x1f, 0xc4, 0x7a, 0xcd, 0x1a, 0xa7, 0xa2,
+    0x0c, 0xfd, 0x5c, 0x44, 0x1a, 0xad, 0xa2, 0x37, 0x35, 0xc9, 0xcf, 0xf6, 0x4a, 0x32, 0xb8, 0x2b,
+];
+
+proptest! {
+    /// `convert_endianness` (G2, 64-byte chunks) is its own inverse for every 128-byte input.
+    #[test]
+    fn prop_convert_endianness_g2_involution(bytes in prop::collection::vec(any::<u8>(), 128)) {
+        let mut x = [0u8; 128];
+        x.copy_from_slice(&bytes);
+        prop_assert_eq!(convert_endianness::<64, 128>(&convert_endianness::<64, 128>(&x)), x);
+    }
+
+    /// Aggregation is order-independent, and `_in_place` matches the non-clobbering variant, over
+    /// random multisets of valid G2 points (generated as base * random scalar).
+    #[test]
+    fn prop_aggregate_order_and_in_place(scalars in prop::collection::vec(any::<[u8; 32]>(), 1..7)) {
+        let base = G2Point::from_le_bytes(PROP_BASE_G2);
+        let pts: Vec<G2Point> = scalars.iter().map(|s| (base * *s).unwrap()).collect();
+
+        let forward = aggregate_g2(&pts).unwrap();
+
+        let mut reversed = pts.clone();
+        reversed.reverse();
+        prop_assert_eq!(aggregate_g2(&reversed).unwrap(), forward); // commutative: order can't matter
+
+        let mut in_place = pts.clone();
+        prop_assert_eq!(aggregate_g2_in_place(&mut in_place).unwrap(), forward); // in-place agrees
+    }
+}
