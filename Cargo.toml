@@ -13,7 +13,7 @@ categories = ["cryptography", "no-std"]
 exclude = [".github/", ".gitignore"]
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))', 'cfg(target_feature, values("static-syscalls"))', 'cfg(feature, values("static-syscalls"))'] }
 
 [dependencies]
 solana-program-error = { version = "3", default-features = false }
@@ -23,6 +23,10 @@ ark-bn254 = { version = "0.6.0" }
 ark-ec = { version = "0.6.0" }
 ark-ff = { version = "0.6.0" }
 ark-serialize = { version = "0.6.0" }
+
+[features]
+default = ["static-syscalls"]
+static-syscalls = []
 
 [dev-dependencies]
 svm-unit-test = "0.1.7"
