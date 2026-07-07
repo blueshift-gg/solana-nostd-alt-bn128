@@ -2,7 +2,7 @@
 name = "solana-nostd-alt-bn128"
 authors = ["Dean Little <@deanmlittle>"]
 description = "A more efficient, no_std LE implementation of alt_bn128 (BN254) group/compression operations for the Solana SVM"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
