@@ -28,7 +28,27 @@ pub const ALT_BN128_G2_COMPRESS: u64 = 0x02 | 0x80;
 /// G2 point decompression (little-endian operand).
 pub const ALT_BN128_G2_DECOMPRESS: u64 = 0x03 | 0x80;
 
-#[cfg(any(target_os = "solana", target_arch = "bpf"))]
+#[cfg(all(
+    any(target_os = "solana", target_arch = "bpf"),
+    any(target_feature = "static-syscalls", feature = "static-syscalls")
+))]
+#[inline]
+unsafe fn sol_alt_bn128_compression(
+    op: u64,
+    input: *const u8,
+    input_size: u64,
+    result: *mut u8,
+) -> u64 {
+    let f: unsafe extern "C" fn(u64, *const u8, u64, *mut u8) -> u64 = unsafe {
+        core::mem::transmute(0x334fd5ed_usize) // murmur3_32("sol_alt_bn128_compression")
+    };
+    f(op, input, input_size, result)
+}
+
+#[cfg(all(
+    any(target_os = "solana", target_arch = "bpf"),
+    not(any(target_feature = "static-syscalls", feature = "static-syscalls"))
+))]
 unsafe extern "C" {
     fn sol_alt_bn128_compression(
         op: u64,

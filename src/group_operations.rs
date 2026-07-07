@@ -115,7 +115,26 @@ pub const ALT_BN128_G2_ADD: u64 = 0x04 | LE_FLAG;
 /// G2 scalar multiplication (little-endian operands).
 pub const ALT_BN128_G2_MUL: u64 = 0x06 | LE_FLAG;
 
-#[cfg(any(target_os = "solana", target_arch = "bpf"))]
+#[cfg(all(
+    any(target_os = "solana", target_arch = "bpf"),
+    any(target_feature = "static-syscalls", feature = "static-syscalls")
+))]
+#[inline]
+unsafe fn sol_alt_bn128_group_op(
+    group_op: u64,
+    input: *const u8,
+    input_size: u64,
+    result: *mut u8,
+) -> u64 {
+    let f: unsafe extern "C" fn(u64, *const u8, u64, *mut u8) -> u64 =
+        unsafe { core::mem::transmute(0xae0c318b_usize) }; // murmur3_32(b"sol_alt_bn128_group_op")
+    f(group_op, input, input_size, result)
+}
+
+#[cfg(all(
+    any(target_os = "solana", target_arch = "bpf"),
+    not(any(target_feature = "static-syscalls", feature = "static-syscalls"))
+))]
 unsafe extern "C" {
     fn sol_alt_bn128_group_op(
         group_op: u64,
