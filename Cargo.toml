@@ -29,4 +29,4 @@ default = ["static-syscalls"]
 static-syscalls = []
 
 [dev-dependencies]
-svm-unit-test = "0.1.7"
+svm-unit-test = "0.1.9"
