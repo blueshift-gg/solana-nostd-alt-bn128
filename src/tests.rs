@@ -1629,6 +1629,31 @@ fn test_pairing() {
             pass
         );
     });
+
+    // `pairing_bytes` agrees with `pairing` on every vector.
+    fn flat(test: &[([u8; 64], [u8; 128])]) -> Vec<u8> {
+        test.iter()
+            .flat_map(|(g1, g2)| g1.iter().chain(g2).copied())
+            .collect()
+    }
+    for (tests, want) in [
+        (
+            tests_1_fail.iter().map(|t| flat(t)).collect::<Vec<_>>(),
+            fail,
+        ),
+        (tests_2_pass.iter().map(|t| flat(t)).collect(), pass),
+        (tests_2_fail.iter().map(|t| flat(t)).collect(), fail),
+        (tests_3_pass.iter().map(|t| flat(t)).collect(), pass),
+        (tests_10_pass.iter().map(|t| flat(t)).collect(), pass),
+    ] {
+        for input in tests {
+            assert_eq!(pairing_bytes(&input).expect("valid pairs"), want);
+            // A trailing partial pair is rejected, not truncated.
+            let mut bad = input.clone();
+            bad.push(0);
+            assert_eq!(pairing_bytes(&bad), Err(AltBn128Error::GroupError));
+        }
+    }
 }
 
 #[test]

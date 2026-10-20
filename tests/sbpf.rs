@@ -18,7 +18,7 @@ use core::hint::black_box;
 
 use solana_nostd_alt_bn128::{
     AltBn128Error, G1Point, G2Point, ProgramError, g1_compress, g1_decompress, g2_compress,
-    g2_decompress, pairing,
+    g2_decompress, pairing, pairing_bytes,
 };
 use svm_unit_test::svm_test;
 
@@ -199,6 +199,13 @@ fn correctness() {
         pairing(black_box(&[(PAIR0_G1, PAIR0_G2), (PAIR1_G1, PAIR1_G2)])).unwrap()
             == PAIRING_EXPECT
     );
+    let mut flat = [0u8; 2 * 192];
+    flat[..64].copy_from_slice(&PAIR0_G1.0);
+    flat[64..192].copy_from_slice(&PAIR0_G2.0);
+    flat[192..256].copy_from_slice(&PAIR1_G1.0);
+    flat[256..].copy_from_slice(&PAIR1_G2.0);
+    assert!(pairing_bytes(black_box(&flat)).unwrap() == PAIRING_EXPECT);
+    assert!(pairing_bytes(black_box(&flat[..191])).is_err());
 
     // Compression (manual): output must match the syscall-produced golden, and
     // round-trip through the decompress syscall.
@@ -331,6 +338,16 @@ fn pairing_3() {
         ]))
         .unwrap(),
     );
+}
+
+#[svm_test]
+fn pairing_bytes_2() {
+    let mut flat = [0u8; 2 * 192];
+    flat[..64].copy_from_slice(&PAIR0_G1.0);
+    flat[64..192].copy_from_slice(&PAIR0_G2.0);
+    flat[192..256].copy_from_slice(&PAIR1_G1.0);
+    flat[256..].copy_from_slice(&PAIR1_G2.0);
+    black_box(pairing_bytes(black_box(&flat)).unwrap());
 }
 
 #[svm_test]

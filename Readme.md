@@ -11,7 +11,7 @@ A more efficient, `no_std` implementation of the alt_bn128 (BN254) group and com
 
 ```toml
 [dependencies]
-solana-nostd-alt-bn128 = "0.1.0"
+solana-nostd-alt-bn128 = "0.1.2"
 ```
 
 ```rust
@@ -25,6 +25,10 @@ let neg = -a;                // negation is infallible
 
 // Multi-pairing: returns a 32-byte LE scalar, `1` iff the product is the GT identity.
 let one = pairing(&[(g1, g2), (h1, h2)])?;
+
+// The same over a flat `(G1 || G2)` byte slice, for a pair count known only at
+// run time; the slice goes to the syscall without a copy.
+let one = pairing_bytes(&pairs)?;    // pairs.len() == n * PAIRING_PAIR_LEN
 ```
 
 `AltBn128Error` implements `Into<ProgramError>`, so every result is `?`-propagatable from any program entrypoint.
@@ -58,6 +62,7 @@ On-chain compute unit cost per operation. These measure the operation only — t
 | `pairing` (1 pair)  |   36739 |
 | `pairing` (2 pairs) |   49092 |
 | `pairing` (3 pairs) |   61445 |
+| `pairing_bytes` (2 pairs) | 49108 |
 | `g1_compress`       |      42 |
 | `g1_decompress`     |     569 |
 | `g2_compress`       |      52 |

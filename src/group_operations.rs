@@ -541,6 +541,60 @@ pub fn pairing<const N: usize>(input: &[(G1Point, G2Point); N]) -> Result<G1Scal
     }
 }
 
+/// Width of one pairing operand on the wire: a G1 point (64 bytes) followed by
+/// a G2 point (128 bytes), as [`pairing_bytes`] reads them.
+pub const PAIRING_PAIR_LEN: usize = 192;
+
+/// [`pairing`] over a flat byte slice of `(G1 || G2)` pairs,
+/// [`PAIRING_PAIR_LEN`] bytes each, for a pair count known only at run time.
+/// The slice goes to the syscall as is (no copy), so it can live anywhere: the
+/// heap, account data, or a caller's stack buffer.
+///
+/// Fails with [`AltBn128Error::GroupError`] when the length isn't a multiple of
+/// [`PAIRING_PAIR_LEN`], or when an operand doesn't decode.
+pub fn pairing_bytes(input: &[u8]) -> Result<G1Scalar, AltBn128Error> {
+    if input.len() % PAIRING_PAIR_LEN != 0 {
+        return Err(AltBn128Error::GroupError);
+    }
+    #[cfg(any(target_os = "solana", target_arch = "bpf"))]
+    {
+        let mut result = core::mem::MaybeUninit::<[u8; 32]>::uninit();
+        let status = unsafe {
+            sol_alt_bn128_group_op(
+                ALT_BN128_PAIRING,
+                input.as_ptr(),
+                input.len() as u64,
+                result.as_mut_ptr() as *mut u8,
+            )
+        };
+        match status {
+            0 => Ok(unsafe { result.assume_init() }),
+            _ => Err(AltBn128Error::GroupError),
+        }
+    }
+    #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
+    {
+        let mut g1s = Vec::with_capacity(input.len() / PAIRING_PAIR_LEN);
+        let mut g2s = Vec::with_capacity(input.len() / PAIRING_PAIR_LEN);
+        for pair in input.chunks_exact(PAIRING_PAIR_LEN) {
+            g1s.push(
+                G1Affine::deserialize_uncompressed(&pair[..64])
+                    .map_err(|_| AltBn128Error::GroupError)?,
+            );
+            g2s.push(
+                G2Affine::deserialize_uncompressed(&pair[64..])
+                    .map_err(|_| AltBn128Error::GroupError)?,
+            );
+        }
+        let res = Bn254::multi_pairing(g1s, g2s);
+        let mut result = [0u8; 32];
+        if res.0 == ark_bn254::Fq12::one() {
+            result[0] = 1;
+        }
+        Ok(result)
+    }
+}
+
 // ---- Operator API ---------------------------------------------------------
 //
 // Point arithmetic is exposed solely through these operators. The group ops
