@@ -2,7 +2,7 @@
 name = "solana-nostd-alt-bn128"
 authors = ["Dean Little <@deanmlittle>"]
 description = "A more efficient, no_std LE implementation of alt_bn128 (BN254) group/compression operations for the Solana SVM"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -29,4 +29,4 @@ default = ["static-syscalls"]
 static-syscalls = []
 
 [dev-dependencies]
-svm-unit-test = "0.1.9"
+svm-unit-test = "0.1.10"

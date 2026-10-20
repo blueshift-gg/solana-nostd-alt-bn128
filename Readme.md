@@ -11,7 +11,7 @@ A more efficient, `no_std` implementation of the alt_bn128 (BN254) group and com
 
 ```toml
 [dependencies]
-solana-nostd-alt-bn128 = "0.1.2"
+solana-nostd-alt-bn128 = "0.1.3"
 ```
 
 ```rust

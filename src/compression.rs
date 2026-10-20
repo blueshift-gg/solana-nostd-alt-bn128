@@ -42,7 +42,7 @@ unsafe fn sol_alt_bn128_compression(
     let f: unsafe extern "C" fn(u64, *const u8, u64, *mut u8) -> u64 = unsafe {
         core::mem::transmute(0x334fd5ed_usize) // murmur3_32("sol_alt_bn128_compression")
     };
-    f(op, input, input_size, result)
+    unsafe { f(op, input, input_size, result) }
 }
 
 #[cfg(all(

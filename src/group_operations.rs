@@ -128,7 +128,7 @@ unsafe fn sol_alt_bn128_group_op(
 ) -> u64 {
     let f: unsafe extern "C" fn(u64, *const u8, u64, *mut u8) -> u64 =
         unsafe { core::mem::transmute(0xae0c318b_usize) }; // murmur3_32(b"sol_alt_bn128_group_op")
-    f(group_op, input, input_size, result)
+    unsafe { f(group_op, input, input_size, result) }
 }
 
 #[cfg(all(
@@ -498,10 +498,10 @@ const SCALAR_ONE: G2Scalar = {
 pub fn pairing<const N: usize>(input: &[(G1Point, G2Point); N]) -> Result<G1Scalar, AltBn128Error> {
     #[cfg(any(target_os = "solana", target_arch = "bpf"))]
     {
-        // Flatten into a contiguous `[[u8; 192]; N]` (G1 || G2 per pair); a
+        // Flatten into a contiguous `[[u8; PAIRING_PAIR_LEN]; N]` (G1 || G2 per pair); a
         // `[(G1Point, G2Point); N]` has no guaranteed element layout, while
-        // an array of `[u8; 192]` is contiguous by definition.
-        let mut buffer = [[0u8; 192]; N];
+        // an array of `[u8; PAIRING_PAIR_LEN]` is contiguous by definition.
+        let mut buffer = [[0u8; PAIRING_PAIR_LEN]; N];
         for (slot, (g1, g2)) in buffer.iter_mut().zip(input.iter()) {
             slot[..64].copy_from_slice(&g1[..]);
             slot[64..].copy_from_slice(&g2[..]);
@@ -511,7 +511,7 @@ pub fn pairing<const N: usize>(input: &[(G1Point, G2Point); N]) -> Result<G1Scal
             sol_alt_bn128_group_op(
                 ALT_BN128_PAIRING,
                 buffer.as_ptr() as *const u8,
-                (N * 192) as u64,
+                (N * PAIRING_PAIR_LEN) as u64,
                 result.as_mut_ptr() as *mut u8,
             )
         };
